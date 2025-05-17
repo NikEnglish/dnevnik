@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Электронный дневник</title>
+  <style>
+    body{font-family:Arial,sans-serif;background:#f4f7fc;margin:0;padding:0}
+    h1{text-align:center;color:#2a3d66;margin-top:20px;font-size:36px;font-weight:bold}
+    .container{max-width:1200px;margin:0 auto;padding:20px}
+    button{background:#6c63ff;color:#fff;font-size:16px;border:none;border-radius:5px;padding:12px 20px;cursor:pointer;transition:.3s}
+    button:hover{background:#5a4ac7}
+    table{width:100%;border-collapse:collapse;margin-top:40px;background:#fff;border-radius:8px;box-shadow:0 4px 8px rgba(0,0,0,.1)}
+    th,td{padding:15px;text-align:center;border:1px solid #e2e2e2}
+    th{background:#6c63ff;color:#fff;font-size:18px}
+    td{background:#f9f9f9;font-size:16px;color:#333}
+    td:hover{background:#f1f1f1;cursor:pointer}
+    .modal{display:none;position:fixed;z-index:1;left:0;top:0;width:100%;height:100%;overflow:auto;background:rgba(0,0,0,0.4)}
+    .modal-content{background:#fff;margin:15% auto;padding:30px;border-radius:10px;width:400px;box-shadow:0 5px 10px rgba(0,0,0,.2)}
+    .close{color:#aaa;float:right;font-size:28px;font-weight:bold}
+    .close:hover,.close:focus{color:#000;text-decoration:none;cursor:pointer}
+    input[type="text"],select{width:100%;padding:10px;margin:10px 0;border:1px solid #ddd;border-radius:5px;font-size:16px}
+    input[type="text"]:focus,select:focus{border-color:#6c63ff}
+    .popup{position:absolute;display:none;background:#fff;padding:10px;border:1px solid #ccc;border-radius:5px;z-index:1000}
+    .highlight{background-color:#fffacd}
+    .login-container{max-width:400px;margin:100px auto;padding:30px;background:#fff;border-radius:10px;box-shadow:0 4px 8px rgba(0,0,0,.1)}
+    .login-container input{width:100%;padding:12px;margin-bottom:15px;border:1px solid #ddd;border-radius:5px}
+    .login-container button{width:100%}
+    .controls{margin:20px 0;padding:15px;background:#fff;border-radius:8px;box-shadow:0 2px 4px rgba(0,0,0,.1)}
+    .controls select{margin-right:15px;padding:8px 12px}
+  </style>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-database-compat.js"></script>
+</head>
+<body>
+<div class="login-container">
+  <h3>Вход в электронный дневник</h3>
+  <input id="uidInput" placeholder="Введите UID учителя">
+  <button onclick="login()">Войти</button>
+</div>
+
+<div id="app" style="display:none;">
+  <div class="controls">
+    Учитель: <select id="teacherSelect" onchange="refreshData()"></select>
+    Класс: <select id="classSelect" onchange="refreshData()"></select>
+    Предмет: <select id="subjectSelect" onchange="refreshData()"></select>
+    Четверть:
+    <select id="quarterSelect" onchange="refreshData()">
+      <option value="1">1</option>
+      <option value="2">2</option>
+      <option value="3">3</option>
+      <option value="4">4</option>
+    </select>
+    <button onclick="showAddSubjectModal()">Добавить предмет</button>
+  </div>
+  <div id="tableContainer"></div>
+</div>
+
+<div id="popup" class="popup">
+  <select id="markSelect">
+    <option value="">—</option>
+    <option value="5">5</option>
+    <option value="4">4</option>
+    <option value="3">3</option>
+    <option value="2">2</option>
+    <option value="Н">Н</option>
+    <option value="О">О</option>
+    <option value="Б">Б</option>
+    <option value="У">У</option>
+  </select>
+  <button onclick="saveMark()">ОК</button>
+</div>
+
+<div id="addSubjectModal" class="modal">
+  <div class="modal-content">
+    <span class="close" onclick="closeModal('addSubjectModal')">&times;</span>
+    <h3>Добавить новый предмет</h3>
+    <input type="text" id="newSubjectName" placeholder="Название предмета">
+    <button onclick="addNewSubject()">Добавить</button>
+  </div>
+</div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyBrnEn_0-kgZGps7rF_q-kGRNmlXjLhC9s",
+  authDomain: "electronic-diary-5a429.firebaseapp.com",
+  databaseURL: "https://electronic-diary-5a429-default-rtdb.firebaseio.com",
+  projectId: "electronic-diary-5a429",
+  storageBucket: "electronic-diary-5a429.appspot.com",
+  messagingSenderId: "1008809523219",
+  appId: "1:1008809523219:web:1fa9df67341d3eb6d827e6"
+};
+
+// Стандартные предметы
+const DEFAULT_SUBJECTS = {
+  "Математика": true,
+  "Русский язык": true,
+  "Литература": true,
+  "Физика": true,
+  "Химия": true,
+  "История": true,
+  "Обществознание": true,
+  "Биология": true,
+  "География": true,
+  "Иностранный язык": true,
+  "Физкультура": true,
+  "Информатика": true
+};
+
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+
+let currentTeacher = null;
+let allTeachers = {};
+let allClasses = {};
+let allStudents = {};
+let allSubjects = {};
+let selectedStudent = null;
+let selectedDate = null;
+
+function login() {
+  const uid = document.getElementById("uidInput").value.trim();
+  db.ref("teachers/" + uid).once("value").then(snapshot => {
+    if (snapshot.exists()) {
+      currentTeacher = { uid, ...snapshot.val() };
+      initApp();
+    } else {
+      alert("Учитель не найден");
+    }
+  });
+}
+
+async function initApp() {
+  document.getElementById("app").style.display = "block";
+  document.querySelector(".login-container").style.display = "none";
+  
+  await Promise.all([
+    db.ref("teachers").once("value").then(s => allTeachers = s.val() || {}),
+    db.ref("classes").once("value").then(s => allClasses = s.val() || {}),
+    db.ref("students").once("value").then(s => allStudents = s.val() || {}),
+    db.ref("subjects").once("value").then(s => allSubjects = s.val() || DEFAULT_SUBJECTS)
+  ]);
+
+  const ts = document.getElementById("teacherSelect");
+  ts.innerHTML = "";
+  
+  for (const [uid, t] of Object.entries(allTeachers)) {
+    const opt = document.createElement("option");
+    opt.value = uid;
+    opt.textContent = t.fullName;
+    if (uid === currentTeacher.uid) opt.selected = true;
+    ts.appendChild(opt);
+  }
+
+  if (currentTeacher.canCreateUsers || currentTeacher.canRegister) {
+    const regBtn = document.createElement("button");
+    regBtn.textContent = "Регистрация";
+    regBtn.onclick = showRegistrationForm;
+    regBtn.style.margin = "10px";
+    document.getElementById("app").prepend(regBtn);
+  }
+
+  refreshData();
+}
+
+function getQuarterDates(q) {
+  const y = new Date().getFullYear();
+  return {
+    1: [new Date(y, 8, 1), new Date(y, 9, 31)],
+    2: [new Date(y, 10, 1), new Date(y, 11, 31)],
+    3: [new Date(y, 0, 1), new Date(y, 2, 31)],
+    4: [new Date(y, 3, 1), new Date(y, 4, 31)]
+  }[q];
+}
+
+function refreshData() {
+  const tUID = document.getElementById("teacherSelect").value;
+  const t = allTeachers[tUID];
+  
+  const cs = document.getElementById("classSelect");
+  cs.innerHTML = "";
+  
+  for (const [cn, c] of Object.entries(allClasses)) {
+    if (c.teacher === tUID || t.isClassTeacher) {
+      const o = document.createElement("option");
+      o.value = cn;
+      o.textContent = c.name;
+      if (t.class === cn) o.selected = true;
+      cs.appendChild(o);
+    }
+  }
+
+  const sc = document.getElementById("subjectSelect");
+  const prevSubject = sc.value;
+  sc.innerHTML = "";
+  
+  const selectedClass = cs.value;
+  const classSubjects = allClasses[selectedClass]?.subjects || {};
+  
+  for (const [s, enabled] of Object.entries(classSubjects)) {
+    if (enabled) {
+      const o = document.createElement("option");
+      o.value = s;
+      o.textContent = s;
+      if (s === prevSubject) o.selected = true;
+      sc.appendChild(o);
+    }
+  }
+
+  if (!sc.value && sc.options.length > 0) {
+    sc.options[0].selected = true;
+  }
+
+  renderTable();
+}
+
+function renderTable() {
+  const q = parseInt(document.getElementById("quarterSelect").value);
+  const cn = document.getElementById("classSelect").value;
+  const s = document.getElementById("subjectSelect").value;
+  
+  if (!cn || !s) {
+    document.getElementById("tableContainer").innerHTML = "<p>Выберите класс и предмет</p>";
+    return;
+  }
+  
+  const [start, end] = getQuarterDates(q);
+  
+  const sUIDs = Object.keys(allClasses[cn]?.students || {});
+  const students = sUIDs.map(uid => ({ uid, ...allStudents[uid] })).sort((a, b) => a.fullName.localeCompare(b.fullName));
+  
+  const today = new Date().toDateString();
+  let html = `<h3>${s}</h3><table><tr><th>№</th><th>Ученик</th>`;
+  
+  const dates = [];
+  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+    if (d.getDay() === 0 || d.getDay() === 6) continue;
+    const ds = new Date(d).toDateString();
+    dates.push(ds);
+    html += `<th${ds === today ? ' class="highlight"' : ''}>${d.getDate()}.${d.getMonth()+1}</th>`;
+  }
+  
+  html += "<th>Сред.</th><th>Итог</th></tr>";
+  
+  students.forEach((s, idx) => {
+    html += `<tr><td>${idx + 1}</td><td>${s.fullName}</td>`;
+    dates.forEach(d => html += `<td id="${s.uid}_${d}" onclick="editMark('${s.uid}','${d}')"></td>`);
+    html += `<td id="avg_${s.uid}"></td><td id="final_${s.uid}" onclick="editMark('${s.uid}','final')"></td></tr>`;
+  });
+  
+  html += "</table>";
+  document.getElementById("tableContainer").innerHTML = html;
+  loadMarks(cn, s, q);
+}
+
+function loadMarks(cn, s, q) {
+  db.ref(`grades/${cn}/${s}/Q${q}`).once("value", snap => {
+    const d = snap.val() || {};
+    for (const [uid, m] of Object.entries(d)) {
+      let total = 0, count = 0;
+      for (const [dt, mk] of Object.entries(m)) {
+        const c = document.getElementById(`${uid}_${dt}`);
+        if (c) c.textContent = mk;
+        if (!isNaN(mk)) { total += parseInt(mk); count++ }
+      }
+      if (count > 0) document.getElementById(`avg_${uid}`).textContent = (total / count).toFixed(1);
+      if (m.final) document.getElementById(`final_${uid}`).textContent = m.final;
+    }
+  });
+}
+
+function editMark(uid, dateStr) {
+  selectedStudent = uid;
+  selectedDate = dateStr;
+  const cell = document.getElementById(`${uid}_${dateStr}`);
+  const p = document.getElementById("popup");
+  p.style.left = cell.getBoundingClientRect().left + window.scrollX + "px";
+  p.style.top = cell.getBoundingClientRect().top + window.scrollY + "px";
+  p.style.display = "block";
+}
+
+function saveMark() {
+  const m = document.getElementById("markSelect").value;
+  const q = document.getElementById("quarterSelect").value;
+  const cn = document.getElementById("classSelect").value;
+  const s = document.getElementById("subjectSelect").value;
+  const r = `grades/${cn}/${s}/Q${q}/${selectedStudent}`;
+  const u = {};
+  u[selectedDate] = m;
+  
+  db.ref(r).update(u).then(() => {
+    document.getElementById("popup").style.display = "none";
+    renderTable();
+  });
+}
+
+function showRegistrationForm() {
+  const type = prompt("Кого регистрируем? Введите 'ученик' или 'учитель'").toLowerCase();
+  if (!type || (type !== "ученик" && type !== "учитель")) {
+    return alert("Неверный тип пользователя");
+  }
+
+  const fullName = prompt("ФИО:");
+  if (!fullName) return;
+
+  let uid = prompt("UID (оставьте пустым для автогенерации):");
+  if (!uid) uid = (type === "ученик" ? "s_" : "t_") + Math.random().toString(36).substring(2, 8);
+
+  const updates = {};
+
+  if (type === "ученик") {
+    const className = prompt("Класс (например, 9A):");
+    if (!className) return;
+
+    if (!allClasses[className]) {
+      if (confirm("Класс не существует. Создать новый класс?")) {
+        updates[`classes/${className}`] = {
+          name: className,
+          students: {},
+          subjects: DEFAULT_SUBJECTS,
+          teacher: ""
+        };
+        
+        // Добавляем стандартные предметы в общий список
+        for (const subj in DEFAULT_SUBJECTS) {
+          updates[`subjects/${subj}`] = true;
+        }
+      } else {
+        return alert("Регистрация отменена: класс не существует");
+      }
+    }
+
+    updates[`students/${uid}`] = { 
+      fullName, 
+      class: className 
+    };
+    
+    updates[`classes/${className}/students/${uid}`] = true;
+
+  } else if (type === "учитель") {
+    let subject = prompt("Предмет:");
+    
+    // Проверяем существует ли предмет
+    if (!allSubjects[subject]) {
+      if (confirm("Предмет не найден. Добавить новый предмет в систему?")) {
+        updates[`subjects/${subject}`] = true;
+        allSubjects[subject] = true;
+      } else {
+        return alert("Регистрация отменена: предмет не существует");
+      }
+    }
+
+    const className = prompt("Класс (оставьте пустым, если не классный руководитель):");
+    
+    const teacherData = { 
+      fullName, 
+      subject, 
+      canCreateUsers: false, 
+      canRegister: false 
+    };
+
+    if (className) {
+      if (!allClasses[className]) {
+        if (confirm("Класс не существует. Создать новый класс?")) {
+          updates[`classes/${className}`] = {
+            name: className,
+            students: {},
+            subjects: DEFAULT_SUBJECTS,
+            teacher: uid
+          };
+          
+          // Добавляем стандартные предметы
+          for (const subj in DEFAULT_SUBJECTS) {
+            updates[`subjects/${subj}`] = true;
+          }
+        } else {
+          return alert("Регистрация отменена: класс не существует");
+        }
+      } else {
+        updates[`classes/${className}/teacher`] = uid;
+      }
+      teacherData.isClassTeacher = true;
+      teacherData.class = className;
+    }
+
+    updates[`teachers/${uid}`] = teacherData;
+  }
+
+  db.ref().update(updates)
+    .then(() => {
+      alert(`Пользователь ${uid} успешно зарегистрирован`);
+      // Обновляем локальные данные
+      return Promise.all([
+        db.ref("classes").once("value").then(s => allClasses = s.val() || {}),
+        db.ref("teachers").once("value").then(s => allTeachers = s.val() || {}),
+        db.ref("students").once("value").then(s => allStudents = s.val() || {}),
+        db.ref("subjects").once("value").then(s => allSubjects = s.val() || {})
+      ]);
+    })
+    .then(() => {
+      if (type === "ученик") refreshData();
+    })
+    .catch(error => {
+      alert("Ошибка при регистрации: " + error.message);
+    });
+}
+
+function showAddSubjectModal() {
+  document.getElementById("addSubjectModal").style.display = "block";
+}
+
+function closeModal(modalId) {
+  document.getElementById(modalId).style.display = "none";
+}
+
+function addNewSubject() {
+  const subjectName = document.getElementById("newSubjectName").value.trim();
+  if (!subjectName) return alert("Введите название предмета");
+  
+  const className = document.getElementById("classSelect").value;
+  if (!className) return alert("Сначала выберите класс");
+  
+  const updates = {};
+  
+  // Добавляем предмет в общий список
+  updates[`subjects/${subjectName}`] = true;
+  
+  // Добавляем предмет в выбранный класс
+  updates[`classes/${className}/subjects/${subjectName}`] = true;
+  
+  db.ref().update(updates)
+    .then(() => {
+      alert(`Предмет "${subjectName}" успешно добавлен в класс ${className}`);
+      closeModal("addSubjectModal");
+      document.getElementById("newSubjectName").value = "";
+      
+      // Обновляем данные
+      return Promise.all([
+        db.ref("classes").once("value").then(s => allClasses = s.val() || {}),
+        db.ref("subjects").once("value").then(s => allSubjects = s.val() || {})
+      ]);
+    })
+    .then(() => {
+      refreshData();
+    })
+    .catch(error => {
+      alert("Ошибка при добавлении предмета: " + error.message);
+    });
+}
+</script>
+</body>
+</html>
