@@ -119,16 +119,32 @@ let selectedDate = null;
 
 function login() {
   const uid = document.getElementById("uidInput").value.trim();
+  
+  // Проверка на пустой ввод
+  if (!uid) {
+    alert("Пожалуйста, введите UID учителя");
+    return;
+  }
+  
+  // Проверка на минимальную длину (например, 3 символа)
+  if (uid.length < 3) {
+    alert("UID слишком короткий");
+    return;
+  }
+
   db.ref("teachers/" + uid).once("value").then(snapshot => {
     if (snapshot.exists()) {
       currentTeacher = { uid, ...snapshot.val() };
       initApp();
     } else {
-      alert("Учитель не найден");
+      alert("Учитель с таким UID не найден");
+      document.getElementById("uidInput").value = ""; // Очищаем поле ввода
+      document.getElementById("uidInput").focus(); // Возвращаем фокус на поле
     }
+  }).catch(error => {
+    alert("Ошибка при проверке UID: " + error.message);
   });
 }
-
 async function initApp() {
   document.getElementById("app").style.display = "block";
   document.querySelector(".login-container").style.display = "none";
